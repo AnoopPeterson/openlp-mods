@@ -1,0 +1,124 @@
+stages:
+  - test
+  - deploy
+
+variables:
+  IMAGE_BASE: $CI_REGISTRY/openlp/runners
+
+lint-python:
+  stage: test
+  image: $IMAGE_BASE/debian
+  script:
+    - sh scripts/generate_resources.sh
+    - flake8
+
+lint-javascript:
+  stage: test
+  image: $IMAGE_BASE/angular
+  script:
+    - yarn install
+    - yarn lint
+
+test-debian:
+  stage: test
+  image: $IMAGE_BASE/debian
+  script:
+    - sh scripts/generate_resources.sh
+    - xvfb-run -s '-screen 0 1024x768x24' pytest-3 --color=no --disable-warnings --cov openlp --cov-report term --cov-report xml:coverage.xml
+    - mv .coverage linux.coverage
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  artifacts:
+    paths:
+      - linux.coverage
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+
+test-ubuntu:
+  stage: test
+  image: $IMAGE_BASE/ubuntu
+  script:
+    - sh scripts/generate_resources.sh
+    - xvfb-run -s '-screen 0 1024x768x24' pytest-3 --color=no --disable-warnings
+
+test-fedora:
+  stage: test
+  image: $IMAGE_BASE/fedora
+  script:
+    - sh scripts/generate_resources.sh
+    - xvfb-run -s '-screen 0 1024x768x24' pytest-3 --color=no --disable-warnings
+
+test-arch:
+  stage: test
+  image: $IMAGE_BASE/arch
+  script:
+    - sh scripts/generate_resources.sh
+    - xvfb-run -s '-screen 0 1024x768x24' pytest --color=no --disable-warnings
+
+test-macos-intel:
+  stage: test
+  tags:
+    - apple-amd64
+  script:
+    - export PATH=/opt/local/bin:$PATH
+    - sh scripts/generate_resources.sh
+    - python3 -m pytest --color=no --disable-warnings --cov openlp
+    - mv .coverage macos.coverage
+  artifacts:
+    paths:
+      - macos.coverage
+  only:
+    - master@openlp/openlp
+
+test-macos-arm:
+  stage: test
+  tags:
+    - apple-arm
+  script:
+    - export PATH=/opt/local/bin:$PATH
+    - sh scripts/generate_resources.sh
+    - python3 -m pytest --color=no --disable-warnings
+  only:
+    - master@openlp/openlp
+
+test-display:
+  stage: test
+  image: $IMAGE_BASE/angular
+  script:
+    - yarn install
+    - yarn test --browsers ChromiumHeadlessCI
+
+upload-pypi:
+  stage: deploy
+  image: $IMAGE_BASE/debian
+  script:
+    - python3 setup.py sdist bdist_wheel
+    - twine upload dist/*
+  only:
+    - tags
+
+pages:
+  stage: deploy
+  image: $IMAGE_BASE/debian
+  script:
+    - fixpaths linux.coverage
+    - fixpaths macos.coverage
+    - python3-coverage combine linux.coverage macos.coverage
+    - python3-coverage html
+    - mv htmlcov public
+    - python3-coverage xml
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  artifacts:
+    paths:
+      - public
+    expire_in: 30 days
+    reports:
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+  dependencies:
+    - test-debian
+    - test-macos-intel
+  only:
+    - master@openlp/openlp
